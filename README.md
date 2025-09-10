@@ -26,10 +26,10 @@ You’ll also simulate how this capability would be embedded in a **LangGraph-st
 
 ## 👥 Team Roles
 
-- **Lukas**:  
+- **Mohaymen & Meng Ju**:  
   Lead BIM logic, define geometry extraction from IFC using tools like `ifcopenshell`.
 
-- **Ata & Emilio**:  
+- **João & Jorge**:  
   Lead graph extraction logic, feature engineering, and agent construction.
 
 - **Yashar**:  

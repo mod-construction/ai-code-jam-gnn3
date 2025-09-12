@@ -1,0 +1,48 @@
+{
+  "schema": "IFC4",
+  "entities": {
+    "Wall": [
+      {
+        "id": "WALL_001",
+        "name": "External Wall A",
+        "type": "Wall",
+        "load_bearing": true,
+        "dimensions": { "length": 5000, "height": 3000, "thickness": 200 }
+      }
+    ],
+    "Door": [
+      {
+        "id": "DOOR_001",
+        "name": "Main Entrance Door",
+        "type": "Door",
+        "dimensions": { "width": 900, "height": 2100 }
+      }
+    ]
+  },
+  "relationships": {
+    "ifc": [
+      {
+        "type": "IfcRelVoidsElement",
+        "relatingElement": "WALL_001",
+        "relatedOpening": "OPENING_001"
+      },
+      {
+        "type": "IfcRelFillsElement",
+        "relatingOpening": "OPENING_001",
+        "relatedElement": "DOOR_001"
+      }
+    ],
+    "topologic": [
+      {
+        "type": "adjacent_to",
+        "from": "WALL_001",
+        "to": "DOOR_001"
+      },
+      {
+        "type": "contained_in",
+        "from": "DOOR_001",
+        "to": "SPACE_001"
+      }
+    ]
+  }
+}

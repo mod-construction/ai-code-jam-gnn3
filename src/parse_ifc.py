@@ -1,125 +1,92 @@
-# parse_ifc.py
-
-import ifcopenshell
-import ifcopenshell.util.element as Element
-import json
-
-
 import ifcopenshell
 import ifcopenshell.geom
+import ifcopenshell.util.element as Element
+import ifcopenshell.util.placement as Placement
 from topologicpy.Topology import Topology
 from topologicpy.Cell import Cell
+from topologicpy.Vertex import Vertex
+import numpy as np
 
-def find_topologic_relationships(ifc_file_path, element_types=None):
-    """
-    Find spatial relationships between IFC elements using TopologicPy
-    
-    Args:
-        ifc_file_path: Path to IFC file
-        element_types: List of IFC types to analyze (e.g., ["IfcWall", "IfcDoor", "IfcWindow"])
-                      If None, uses common building elements
-    
-    Returns:
-        List of relationship dictionaries with format:
-        {"type": "intersects", "from": "GlobalId1", "to": "GlobalId2"}
-    """
-    settings = ifcopenshell.geom.settings()
-    ifc_file = ifcopenshell.open(ifc_file_path)
-    
-    # Default element types if not specified
-    if element_types is None:
-        element_types = ["IfcWall", "IfcSlab", "IfcColumn", "IfcBeam", 
-                        "IfcDoor", "IfcWindow", "IfcSpace"]
-    
-    def get_bounding_box_topology(ifc_element):
-        """Get bounding box as Topologic cell"""
-        try:
-            shape = ifcopenshell.geom.create_shape(settings, ifc_element)
-            geometry = shape.geometry
-            
-            # Get bounding box coordinates
-            verts = geometry.verts
-            xs = [verts[i] for i in range(0, len(verts), 3)]
-            ys = [verts[i+1] for i in range(0, len(verts), 3)]
-            zs = [verts[i+2] for i in range(0, len(verts), 3)]
-            
-            min_x, max_x = min(xs), max(xs)
-            min_y, max_y = min(ys), max(ys)
-            min_z, max_z = min(zs), max(zs)
-            
-            # Create bounding box cell
-            bbox = Cell.ByMinMaxCoordinates(min_x, min_y, min_z, max_x, max_y, max_z)
-            return bbox
-        except Exception as e:
-            print(f"Error creating bbox for {ifc_element.GlobalId}: {e}")
-            return None
-    
-    # Collect all elements with their bounding boxes
-    all_elements = []
-    
-    for element_type in element_types:
-        elements = ifc_file.by_type(element_type)
-        for element in elements:
-            bbox = get_bounding_box_topology(element)
-            if bbox:
-                all_elements.append({
-                    "element": element,
-                    "bbox": bbox,
-                    "GlobalId": element.GlobalId,
-                    "Type": element.is_a()
-                })
-    
-    print(f"Processing {len(all_elements)} elements...")
-    
-    # Find relationships
-    relationships = []
-    
-    for i, elem1 in enumerate(all_elements):
-        for elem2 in all_elements[i+1:]:
-            try:
-                # Check if bounding boxes intersect
-                intersection = Topology.Intersect(elem1["bbox"], elem2["bbox"])
-                
-                if intersection:
-                    volume = Topology.Volume(intersection)
-                    
-                    # If intersection has significant volume, they intersect
-                    if volume > 0.001:  # Threshold to avoid numerical errors
-                        relationships.append({
-                            "type": "intersects",
-                            "from": elem1["GlobalId"],
-                            "to": elem2["GlobalId"]
-                        })
-                    
-                    # Check for adjacency (touching but not intersecting)
-                    # This would be when they share a face but have minimal volume intersection
-                    elif volume < 0.001:
-                        # Check if they share topology (adjacent)
-                        shared = Topology.SharedTopologies(elem1["bbox"], elem2["bbox"])
-                        if shared and len(shared) > 0:
-                            relationships.append({
-                                "type": "adjacent",
-                                "from": elem1["GlobalId"],
-                                "to": elem2["GlobalId"]
-                            })
-            
-            except Exception as e:
-                # Skip if topology operations fail
-                continue
-    
-    print(f"Found {len(relationships)} relationships")
-    return relationships
+def get_local_bounding_box(ifc_element, settings):
+    """Get bounding box in local coordinates (before transformation)"""
+    try:
+        # Create shape without applying placement
+        shape = ifcopenshell.geom.create_shape(settings, ifc_element)
+        geometry = shape.geometry
+        verts = geometry.verts
+        
+        # Get min/max in local coordinates
+        xs = [verts[i] for i in range(0, len(verts), 3)]
+        ys = [verts[i+1] for i in range(0, len(verts), 3)]
+        zs = [verts[i+2] for i in range(0, len(verts), 3)]
+        
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        min_z, max_z = min(zs), max(zs)
+        
+        # Calculate center and dimensions
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        center_z = (min_z + max_z) / 2
+        
+        width = max_x - min_x
+        length = max_y - min_y
+        height = max_z - min_z
+        
+        # Create origin vertex at center
+        origin = Vertex.ByCoordinates(center_x, center_y, center_z)
+        
+        # Create bounding box cell centered at origin
+        bbox = Cell.Box(origin=origin, width=width, length=length, height=height)
+        
+        return bbox
+    except Exception as e:
+        print(f"Error creating local bbox for {ifc_element.GlobalId}: {e}")
+        return None
 
+def get_transformation_matrix(ifc_element):
+    """Get the 4x4 transformation matrix from IFC element placement"""
+    try:
+        # Get the placement matrix
+        matrix = ifcopenshell.util.placement.get_local_placement(ifc_element.ObjectPlacement)
+        return matrix
+    except Exception as e:
+        print(f"Error getting transformation for {ifc_element.GlobalId}: {e}")
+        return np.identity(4)
 
+def transform_topology(topology, matrix):
+    """Apply transformation matrix to a topology"""
+    try:
+        # Extract translation from 4x4 matrix
+        tx, ty, tz = matrix[0][3], matrix[1][3], matrix[2][3]
+        
+        # Apply translation to topology
+        transformed = Topology.Translate(topology, tx, ty, tz)
+        
+        # Note: For full rotation support, you'd need to decompose the rotation matrix
+        # and apply it using Topology.Rotate, but for many cases translation is sufficient
+        # If rotation is needed, we can add that functionality
+        
+        return transformed
+    except Exception as e:
+        print(f"Error transforming topology: {e}")
+        return topology
 
 def parse_ifc_to_json(ifc_path):
     model = ifcopenshell.open(ifc_path)
+    
+    # Settings without applying transformations initially
+    settings = ifcopenshell.geom.settings()
+    settings.set(settings.DISABLE_OPENING_SUBTRACTIONS, False)
 
     output = {
         'schema': model.schema,
         'entities': [],
         'relations': []
-        }
+    }
+    
+    # Store element data for topologic analysis
+    element_data = []
     
     # Entities
     entity_types = ['IfcWall', 'IfcDoor', 'IfcWindow']
@@ -130,16 +97,32 @@ def parse_ifc_to_json(ifc_path):
                 'id': entity.GlobalId,
                 'name': entity.Name,
                 'tag': entity.Tag,
+                'type': entity.is_a()
             }
             psets = Element.get_psets(entity)
             # Add all properties and quantities as flat key-value pairs
             for pset_name, properties in psets.items():
                 for prop_name, prop_value in properties.items():
-                # Skip the 'id' key that IfcOpenShell adds
+                    # Skip the 'id' key that IfcOpenShell adds
                     if prop_name != 'id':
                         obj[prop_name] = prop_value
 
             output["entities"].append(obj)
+
+            # Get local bounding box (before transformation)
+            local_bbox = get_local_bounding_box(entity, settings)
+            
+            if local_bbox:
+                # Get transformation matrix
+                transform_matrix = get_transformation_matrix(entity)
+                
+                # Apply transformation to bounding box
+                world_bbox = transform_topology(local_bbox, transform_matrix)
+                
+                element_data.append({
+                    'GlobalId': entity.GlobalId,
+                    'bbox': world_bbox
+                })
 
             # Get all inverse relationships
             inverse_attrs = model.get_inverse(entity)
@@ -148,7 +131,6 @@ def parse_ifc_to_json(ifc_path):
             voids = [inv for inv in inverse_attrs if inv.is_a() == "IfcRelVoidsElement"]
 
             # Find the filling objects
-            print(voids)
             for void in voids:
                 opening = void.RelatedOpeningElement
                 
@@ -167,12 +149,40 @@ def parse_ifc_to_json(ifc_path):
                         "from": filling.GlobalId,
                         "to": entity.GlobalId
                     })
-    # topology
-
+    
+    # Find topologic relationships between transformed bounding boxes
+    print(f"Finding topologic relationships for {len(element_data)} elements...")
+    
+    for i, elem1 in enumerate(element_data):
+        print(i, 'checking element ', elem1)
+        for elem2 in element_data[i+1:]:
+            try:
+                # Check if bounding boxes intersect in world coordinates
+                intersection = Topology.Intersect(elem1["bbox"], elem2["bbox"])
+                
+                if intersection:
+                    output["relations"].append({
+                        "type": "intersects",
+                        "from": elem1["GlobalId"],
+                        "to": elem2["GlobalId"]
+                    })
+                    
+            except Exception as e:
+                # Skip if topology operations fail
+                continue
+    
+    print(f"Found {len(output['relations'])} total relationships")
+    
     return output
 
-result = parse_ifc_to_json("data/sample_2.ifc")
-
-# Save to JSON file
-with open("data/json_cr.json", "w", encoding="utf-8") as f:
-    json.dump(result, f, indent=2, ensure_ascii=False)
+# Usage
+if __name__ == "__main__":
+    import json
+    
+    result = parse_ifc_to_json("data/sample.ifc")
+    
+    # Save to JSON
+    with open("data/json_cr.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+    
+    print(f"Saved {len(result['entities'])} entities and {len(result['relations'])} relationships")

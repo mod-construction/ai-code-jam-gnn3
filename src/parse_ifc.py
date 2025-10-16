@@ -10,7 +10,7 @@ def parse_ifc_to_json(ifc_path):
     output = {
         'schema': model.schema,
         'entities': [],
-        'relationshipts': []
+        'relations': []
         }
     
     # Entities
@@ -33,15 +33,37 @@ def parse_ifc_to_json(ifc_path):
 
             output["entities"].append(obj)
 
+            # Get all inverse relationships
+            inverse_attrs = model.get_inverse(entity)
 
+            # Find IfcRelVoidsElement relationships
+            voids = [inv for inv in inverse_attrs if inv.is_a() == "IfcRelVoidsElement"]
 
-    # relationships
-
+            # Find the filling objects
+            print(voids)
+            for void in voids:
+                opening = void.RelatedOpeningElement
+                
+                # Find what fills this opening
+                filling = None
+                opening_inverses = model.get_inverse(opening)
+                for inv in opening_inverses:
+                    if inv.is_a() == "IfcRelFillsElement":
+                        filling = inv.RelatedBuildingElement
+                        break
+                
+                if filling:
+                    # Relationship: filling element voids the wall
+                    output["relations"].append({
+                        "type": "contained_in",
+                        "from": filling.GlobalId,
+                        "to": entity.GlobalId
+                    })
     # topology
 
     return output
 
-result = parse_ifc_to_json("data/sample.ifc")
+result = parse_ifc_to_json("data/sample_2.ifc")
 
 # Save to JSON file
 with open("data/json_cr.json", "w", encoding="utf-8") as f:

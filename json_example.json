@@ -19,20 +19,7 @@
       }
     ]
   },
-  "relationships": {
-    "ifc": [
-      {
-        "type": "IfcRelVoidsElement",
-        "relatingElement": "WALL_001",
-        "relatedOpening": "OPENING_001"
-      },
-      {
-        "type": "IfcRelFillsElement",
-        "relatingOpening": "OPENING_001",
-        "relatedElement": "DOOR_001"
-      }
-    ],
-    "topologic": [
+  "relationships": [
       {
         "type": "adjacent_to",
         "from": "WALL_001",
@@ -44,5 +31,4 @@
         "to": "SPACE_001"
       }
     ]
-  }
 }
